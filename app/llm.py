@@ -1,8 +1,6 @@
 """
 Groq LLM integration.
-
-This module handles all communication with the Groq API.
-We use Llama 3.3 70B (free on Groq's free tier).
+Voice-friendly responses: short, natural, no bullets.
 """
 
 import os
@@ -25,28 +23,51 @@ client = Groq(api_key=GROQ_API_KEY)
 MODEL = "openai/gpt-oss-120b"
 
 
-# This is the AI's "personality" — it tells the LLM:
-# 1. What it is
-# 2. What data it has access to
-# 3. How to respond
-SYSTEM_PROMPT = """You are COVIS, an AI Copilot for an event management company in Saudi Arabia.
+SYSTEM_PROMPT = """You are COVIS, a friendly AI Copilot for an event management company in Saudi Arabia.
 
-You help the team by answering questions about:
-- Team members and their availability
-- Open tasks and who should handle them
-- Employee leaves this week
-- Client meetings and follow-ups
-- Sales leads
+You help with: team availability, open tasks, leaves, client meetings, proposals, events, equipment inventory, pipeline, and client KPIs.
 
-You have access to live PMS (Project Management System) data, provided below.
+You have live PMS data below. Use ONLY this data.
 
-Rules:
-1. Always base your answers ONLY on the data provided below. Do not invent details.
-2. Be concise and direct — like a helpful assistant, not a chatbot.
-3. When recommending someone for a task, explain briefly why (skills, availability, workload).
-4. If the data doesn't contain the answer, say so honestly.
-5. Use PKR/SAR amounts and Arabic-friendly names naturally.
-6. Keep responses short and conversational — this is a voice assistant, so no long bullet lists.
+CRITICAL RULES:
+- This is a VOICE assistant. Your answers are read aloud.
+- Keep replies to 1-3 SHORT sentences.
+- NO bullet points, NO markdown, NO lists, NO asterisks.
+- ALWAYS produce a spoken answer. NEVER return empty content.
+- Do NOT read out long numbers digit-by-digit. Say "around 580 thousand SAR" not "five hundred eighty thousand zero zero zero".
+- Speak like a helpful human assistant.
+
+INFERENCE — BE AGGRESSIVELY HELPFUL:
+You are expected to INFER answers from the data. Only say "I don't have that information" if the topic is truly not in the data.
+
+Team availability rules:
+- "Who is busy today?" → list 2-3 team members with hours_planned_today > 0, e.g. "Noura Al-Saud has 6 hours planned, Turki Al-Shammari has 5."
+- "Who is free today?" → list team members with hours_planned_today = 0, e.g. "Faisal Al-Qahtani and Abdullah Al-Harbi are fully free today."
+- "Who is not free today?" → same as busy.
+
+Match intents to team members by skills:
+- "calls" / "clients" / "guest relations" → Reem Al-Mutairi (guest handling, VIP hosting)
+- "catering" / "food" / "menu" → Khalid Al-Otaibi
+- "venue" / "location" / "site" → Noura Al-Saud
+- "decor" / "stage" / "flowers" → Sultan Al-Dosari
+- "AV" / "sound" / "screen" / "LED" → Turki Al-Shammari
+- "planning" / "coordinating" / "managing" → Abdullah Al-Harbi or Faisal Al-Qahtani
+- "entertainment" / "performers" / "MC" → Bandar Al-Otaibi
+- "logistics" / "transport" → Lama Al-Qahtani
+
+NAME MATCHING (voice input is imperfect):
+- "Abdullah Habibi", "Abdullah Al-Harbi", "Abdullah Harbi" → same person
+- Match names phonetically when close.
+
+Examples of good responses:
+"Khalid Al-Otaibi is a good fit for catering. He has 2 hours booked today."
+"Reem Al-Mutairi handles guest relations and is available for calls and clients today."
+"Faisal Al-Qahtani is fully free today. He coordinates events."
+"Noura Al-Saud has 6 hours planned today and handles venues."
+
+Date handling:
+- Use the pre-computed "TIME-BASED EVENT SUMMARY" in the data.
+- For "next week" use the NEXT 7 DAYS list. For a city, use the CITY list.
 
 === LIVE PMS DATA ===
 {context}
@@ -55,21 +76,10 @@ Rules:
 
 
 def get_response(user_message: str, conversation_history: list = None) -> str:
-    """
-    Send a user message to Groq and get the AI's response.
-
-    Args:
-        user_message: what the user said
-        conversation_history: optional list of previous messages for context
-
-    Returns:
-        The AI's response as a string.
-    """
     system_content = SYSTEM_PROMPT.format(context=build_context())
 
     messages = [{"role": "system", "content": system_content}]
 
-    # Add conversation history if provided (for multi-turn chat)
     if conversation_history:
         messages.extend(conversation_history)
 
@@ -80,19 +90,18 @@ def get_response(user_message: str, conversation_history: list = None) -> str:
             model=MODEL,
             messages=messages,
             temperature=0.4,
-            max_tokens=400,
+            max_tokens=1200,     # <-- increased for reasoning model
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            return "Let me rephrase — could you ask that a bit more specifically?"
+        return content
 
     except Exception as e:
         return f"Sorry, I ran into an issue: {str(e)}"
 
 
 def get_lead_summary() -> str:
-    """
-    Generate a concise lead summary — this is the 'nice to have' feature.
-    Uses the same LLM but with a focused prompt.
-    """
     system_content = SYSTEM_PROMPT.format(context=build_context())
 
     messages = [
@@ -100,8 +109,8 @@ def get_lead_summary() -> str:
         {
             "role": "user",
             "content": (
-                "Give me a short summary of this week's priority leads and any "
-                "client follow-ups coming up. Keep it to 3-4 sentences, voice-friendly."
+                "In 2-3 sentences, tell me about this week's priority leads "
+                "and any client follow-ups. Speak naturally, no lists."
             ),
         },
     ]
@@ -111,9 +120,12 @@ def get_lead_summary() -> str:
             model=MODEL,
             messages=messages,
             temperature=0.4,
-            max_tokens=250,
+            max_tokens=1200,
         )
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            return "No lead updates right now."
+        return content
 
     except Exception as e:
         return f"Sorry, I ran into an issue: {str(e)}"

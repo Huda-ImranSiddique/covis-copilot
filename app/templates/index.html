@@ -25,11 +25,14 @@
                 </div>
             </div>
 
-            <div class="status" id="status">Tap the mic to speak</div>
-
-            <button id="mic-btn" class="mic-big" title="Speak">
-                🎤
-            </button>
+            <div class="controls">
+                <div class="status" id="status">Starting...</div>
+                <button id="mic-btn" class="mic-big" title="Speak">🎤</button>
+                <label class="continuous-toggle">
+                    <input type="checkbox" id="continuous-toggle">
+                    <span>Hands-free</span>
+                </label>
+            </div>
         </section>
 
         <!-- RIGHT: Chat panel -->
@@ -37,28 +40,29 @@
             <header class="chat-header">
                 <span class="dot"></span>
                 <span>Live Conversation</span>
+                <button id="clear-btn" class="clear-btn">Clear</button>
             </header>
 
             <main class="chat" id="chat">
                 <div class="message assistant">
                     <div class="bubble">
-                        Hi! I'm COVIS. Ask me about your team, tasks, leads, or client meetings.
+                        Hi! I'm COVIS. Tap the mic and ask me anything about your team, tasks, events, or leads.
                     </div>
                 </div>
             </main>
 
             <div class="quick-actions">
-                <button class="chip" data-q="What is my team plan today?">Team plan today</button>
-                <button class="chip" data-q="Who can fix the FOMAX wedding catering issue urgently today?">Who fixes FOMAX?</button>
-                <button class="chip" data-q="Give me a lead summary for this week">Lead summary</button>
-                <button class="chip" id="clear-btn">Clear</button>
+                <button class="chip" data-q="What is my team plan today?">Team plan</button>
+                <button class="chip" data-q="Who can handle the Al-Faisal wedding catering issue?">Wedding catering</button>
+                <button class="chip" data-q="What events are happening in Riyadh next week?">Riyadh events</button>
+                <button class="chip" data-q="What proposals are currently in review?">Proposals in review</button>
             </div>
 
             <footer class="input-bar">
                 <input
                     type="text"
                     id="message-input"
-                    placeholder="Type a message..."
+                    placeholder="Or type a message..."
                     autocomplete="off"
                 >
                 <button id="send-btn" class="send">Send</button>
@@ -74,12 +78,22 @@
         const statusEl = document.getElementById("status");
         const clearBtn = document.getElementById("clear-btn");
         const orb = document.getElementById("orb");
+        const continuousToggle = document.getElementById("continuous-toggle");
 
-        let history = [];
+        let listening = false;
+        let speaking = false;
+        let processing = false;
+        let recognition = null;
+        let silenceTimer = null;
+        let accumulatedTranscript = "";
 
         function setOrbState(state) {
             orb.classList.remove("listening", "thinking", "speaking");
             if (state) orb.classList.add(state);
+        }
+
+        function scrollToBottom() {
+            chatEl.scrollTop = chatEl.scrollHeight;
         }
 
         function addMessage(role, text) {
@@ -90,15 +104,21 @@
             bubble.textContent = text;
             wrap.appendChild(bubble);
             chatEl.appendChild(wrap);
-            chatEl.scrollTop = chatEl.scrollHeight;
+            requestAnimationFrame(scrollToBottom);
             return bubble;
         }
 
         async function sendMessage(text) {
             if (!text || !text.trim()) return;
 
+            if (recognition && listening) {
+                try { recognition.stop(); } catch (e) {}
+            }
+
+            processing = true;
+            accumulatedTranscript = "";
+
             addMessage("user", text);
-            history.push({ role: "user", content: text });
 
             const thinking = addMessage("assistant", "Thinking...");
             thinking.classList.add("thinking");
@@ -112,18 +132,19 @@
                     body: JSON.stringify({ message: text }),
                 });
                 const data = await res.json();
-                thinking.classList.remove("thinking");
-                thinking.textContent = data.reply;
+                console.log("AI reply:", data.reply);
 
-                history.push({ role: "assistant", content: data.reply });
+                thinking.classList.remove("thinking");
+                thinking.textContent = data.reply || "(empty response — try again)";
+                scrollToBottom();
 
                 speak(data.reply);
-                statusEl.textContent = "Speaking...";
             } catch (err) {
                 thinking.classList.remove("thinking");
                 thinking.textContent = "Error: " + err.message;
                 statusEl.textContent = "Error";
                 setOrbState(null);
+                processing = false;
             }
         }
 
@@ -149,24 +170,50 @@
 
         clearBtn.addEventListener("click", () => {
             chatEl.innerHTML = "";
-            history = [];
-            addMessage("assistant", "Chat cleared. Ask me anything.");
+            addMessage("assistant", "Chat cleared. Tap the mic and ask me anything.");
         });
 
         // ---------- Voice input ----------
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-        if (SpeechRecognition) {
-            const recognition = new SpeechRecognition();
-            recognition.continuous = false;
-            recognition.interimResults = false;
-            recognition.lang = "en-US";
+        function startListening() {
+            if (!recognition || listening || processing || speaking) return;
+            accumulatedTranscript = "";
+            try { recognition.start(); } catch (e) {}
+        }
 
-            let listening = false;
+        function flushTranscript() {
+            const text = accumulatedTranscript.trim();
+            accumulatedTranscript = "";
+            if (text) {
+                sendMessage(text);
+            } else {
+                if (continuousToggle.checked) {
+                    setTimeout(startListening, 500);
+                } else {
+                    statusEl.textContent = "Tap the mic to speak";
+                    setOrbState(null);
+                }
+            }
+        }
+
+        if (SpeechRecognition) {
+            recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = "en-US";
+            recognition.maxAlternatives = 1;
 
             micBtn.addEventListener("click", () => {
-                if (listening) recognition.stop();
-                else recognition.start();
+                if (speaking) {
+                    window.speechSynthesis.cancel();
+                    speaking = false;
+                }
+                if (listening) {
+                    try { recognition.stop(); } catch (e) {}
+                } else {
+                    startListening();
+                }
             });
 
             recognition.onstart = () => {
@@ -176,49 +223,130 @@
                 setOrbState("listening");
             };
 
-            recognition.onend = () => {
-                listening = false;
-                micBtn.classList.remove("listening");
-                if (!orb.classList.contains("thinking") && !orb.classList.contains("speaking")) {
-                    statusEl.textContent = "Tap the mic to speak";
+            recognition.onresult = (event) => {
+                let interim = "";
+                let final = "";
+
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        final += transcript + " ";
+                    } else {
+                        interim += transcript;
+                    }
+                }
+
+                if (final) {
+                    accumulatedTranscript += final;
+                }
+
+                statusEl.textContent = "Listening... " + (accumulatedTranscript + interim).slice(-40);
+
+                if (silenceTimer) clearTimeout(silenceTimer);
+
+                if (accumulatedTranscript) {
+                    silenceTimer = setTimeout(() => {
+                        try { recognition.stop(); } catch (e) {}
+                    }, 2000);
                 }
             };
 
-            recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                sendMessage(transcript);
+            recognition.onend = () => {
+                listening = false;
+                micBtn.classList.remove("listening");
+                if (silenceTimer) {
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                }
+                flushTranscript();
             };
 
             recognition.onerror = (event) => {
+                if (event.error === "no-speech" || event.error === "aborted") return;
                 statusEl.textContent = "Mic error: " + event.error;
                 listening = false;
                 micBtn.classList.remove("listening");
                 setOrbState(null);
             };
+
+            window.addEventListener("load", async () => {
+                try {
+                    await navigator.mediaDevices.getUserMedia({ audio: true });
+                    statusEl.textContent = "Tap the mic to speak";
+                    if (continuousToggle.checked) {
+                        setTimeout(startListening, 800);
+                    }
+                } catch (e) {
+                    statusEl.textContent = "Allow microphone access to speak";
+                }
+            });
+
         } else {
             micBtn.addEventListener("click", () => {
-                statusEl.textContent = "Voice input not supported in this browser";
+                statusEl.textContent = "Voice input needs Chrome or Edge";
             });
             micBtn.style.opacity = "0.4";
         }
 
         // ---------- Voice output ----------
         function speak(text) {
-            if (!("speechSynthesis" in window)) return;
+            if (!("speechSynthesis" in window)) {
+                processing = false;
+                return;
+            }
+
+            if (recognition && listening) {
+                try { recognition.stop(); } catch (e) {}
+            }
+
+            const clean = (text || "")
+                .replace(/[*_`#>]/g, "")
+                .replace(/\s+/g, " ")
+                .trim();
+
+            if (!clean) {
+                processing = false;
+                if (continuousToggle.checked) {
+                    setTimeout(startListening, 800);
+                }
+                return;
+            }
+
             window.speechSynthesis.cancel();
-            const utter = new SpeechSynthesisUtterance(text);
-            utter.rate = 1.0;
+            const utter = new SpeechSynthesisUtterance(clean);
+            utter.rate = 1.05;
             utter.pitch = 1.0;
             utter.lang = "en-US";
 
-            utter.onstart = () => setOrbState("speaking");
+            const voices = window.speechSynthesis.getVoices();
+            const preferred = voices.find(v =>
+                /Google US English|Microsoft Aria|Microsoft Zira|Samantha/i.test(v.name)
+            );
+            if (preferred) utter.voice = preferred;
+
+            utter.onstart = () => {
+                speaking = true;
+                setOrbState("speaking");
+                statusEl.textContent = "Speaking...";
+            };
+
             utter.onend = () => {
+                speaking = false;
+                processing = false;
                 setOrbState(null);
-                statusEl.textContent = "Tap the mic to speak";
+
+                if (continuousToggle.checked && recognition) {
+                    statusEl.textContent = "Listening...";
+                    setTimeout(startListening, 1200);
+                } else {
+                    statusEl.textContent = "Tap the mic to speak";
+                }
             };
 
             window.speechSynthesis.speak(utter);
         }
+
+        window.speechSynthesis.onvoiceschanged = () => {};
     </script>
 </body>
 </html>
