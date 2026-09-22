@@ -11,7 +11,7 @@ from .mock_data import build_context
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY") 
 
 if not GROQ_API_KEY:
     raise RuntimeError(
