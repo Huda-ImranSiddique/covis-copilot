@@ -43,13 +43,7 @@
                 <button id="clear-btn" class="clear-btn">Clear</button>
             </header>
 
-            <main class="chat" id="chat">
-                <div class="message assistant">
-                    <div class="bubble">
-                        Hi! I'm COVIS. Tap the mic and ask me anything about your team, tasks, events, or leads.
-                    </div>
-                </div>
-            </main>
+            <main class="chat" id="chat"></main>
 
             <div class="quick-actions">
                 <button class="chip" data-q="What is my team plan today?">Team plan</button>
@@ -170,7 +164,6 @@
 
         clearBtn.addEventListener("click", () => {
             chatEl.innerHTML = "";
-            addMessage("assistant", "Chat cleared. Tap the mic and ask me anything.");
         });
 
         // ---------- Voice input ----------
@@ -288,7 +281,7 @@
             micBtn.style.opacity = "0.4";
         }
 
-        // ---------- Voice output ----------
+        // ---------- Voice output (MALE voice) ----------
         function speak(text) {
             if (!("speechSynthesis" in window)) {
                 processing = false;
@@ -314,13 +307,13 @@
 
             window.speechSynthesis.cancel();
             const utter = new SpeechSynthesisUtterance(clean);
-            utter.rate = 1.05;
-            utter.pitch = 1.0;
+            utter.rate = 1.0;
+            utter.pitch = 0.9;
             utter.lang = "en-US";
 
             const voices = window.speechSynthesis.getVoices();
             const preferred = voices.find(v =>
-                /Google US English|Microsoft Aria|Microsoft Zira|Samantha/i.test(v.name)
+                /Microsoft David|Microsoft Mark|Microsoft Guy|Google UK English Male|Google US English Male|Alex/i.test(v.name)
             );
             if (preferred) utter.voice = preferred;
 
