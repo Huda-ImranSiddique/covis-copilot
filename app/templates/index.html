@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>COVIS AI Copilot</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="app">
+        <!-- LEFT: Orb panel -->
+        <section class="orb-panel">
+            <div class="brand">
+                <h1>COVIS AI Copilot</h1>
+                <p class="sub">Event Management Assistant</p>
+            </div>
+
+            <div class="orb-wrap">
+                <div class="orb" id="orb">
+                    <div class="orb-shell"></div>
+                    <div class="orb-shell-2"></div>
+                    <div class="orb-shell-3"></div>
+                    <div class="orb-shell-4"></div>
+                    <div class="orb-core"></div>
+                </div>
+            </div>
+
+            <div class="status" id="status">Tap the mic to speak</div>
+
+            <button id="mic-btn" class="mic-big" title="Speak">
+                🎤
+            </button>
+        </section>
+
+        <!-- RIGHT: Chat panel -->
+        <section class="chat-panel">
+            <header class="chat-header">
+                <span class="dot"></span>
+                <span>Live Conversation</span>
+            </header>
+
+            <main class="chat" id="chat">
+                <div class="message assistant">
+                    <div class="bubble">
+                        Hi! I'm COVIS. Ask me about your team, tasks, leads, or client meetings.
+                    </div>
+                </div>
+            </main>
+
+            <div class="quick-actions">
+                <button class="chip" data-q="What is my team plan today?">Team plan today</button>
+                <button class="chip" data-q="Who can fix the FOMAX wedding catering issue urgently today?">Who fixes FOMAX?</button>
+                <button class="chip" data-q="Give me a lead summary for this week">Lead summary</button>
+                <button class="chip" id="clear-btn">Clear</button>
+            </div>
+
+            <footer class="input-bar">
+                <input
+                    type="text"
+                    id="message-input"
+                    placeholder="Type a message..."
+                    autocomplete="off"
+                >
+                <button id="send-btn" class="send">Send</button>
+            </footer>
+        </section>
+    </div>
+
+    <script>
+        const chatEl = document.getElementById("chat");
+        const inputEl = document.getElementById("message-input");
+        const sendBtn = document.getElementById("send-btn");
+        const micBtn = document.getElementById("mic-btn");
+        const statusEl = document.getElementById("status");
+        const clearBtn = document.getElementById("clear-btn");
+        const orb = document.getElementById("orb");
+
+        let history = [];
+
+        function setOrbState(state) {
+            orb.classList.remove("listening", "thinking", "speaking");
+            if (state) orb.classList.add(state);
+        }
+
+        function addMessage(role, text) {
+            const wrap = document.createElement("div");
+            wrap.className = "message " + role;
+            const bubble = document.createElement("div");
+            bubble.className = "bubble";
+            bubble.textContent = text;
+            wrap.appendChild(bubble);
+            chatEl.appendChild(wrap);
+            chatEl.scrollTop = chatEl.scrollHeight;
+            return bubble;
+        }
+
+        async function sendMessage(text) {
+            if (!text || !text.trim()) return;
+
+            addMessage("user", text);
+            history.push({ role: "user", content: text });
+
+            const thinking = addMessage("assistant", "Thinking...");
+            thinking.classList.add("thinking");
+            statusEl.textContent = "Thinking...";
+            setOrbState("thinking");
+
+            try {
+                const res = await fetch("/chat", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ message: text }),
+                });
+                const data = await res.json();
+                thinking.classList.remove("thinking");
+                thinking.textContent = data.reply;
+
+                history.push({ role: "assistant", content: data.reply });
+
+                speak(data.reply);
+                statusEl.textContent = "Speaking...";
+            } catch (err) {
+                thinking.classList.remove("thinking");
+                thinking.textContent = "Error: " + err.message;
+                statusEl.textContent = "Error";
+                setOrbState(null);
+            }
+        }
+
+        sendBtn.addEventListener("click", () => {
+            const text = inputEl.value;
+            inputEl.value = "";
+            sendMessage(text);
+        });
+
+        inputEl.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") {
+                const text = inputEl.value;
+                inputEl.value = "";
+                sendMessage(text);
+            }
+        });
+
+        document.querySelectorAll(".chip[data-q]").forEach((btn) => {
+            btn.addEventListener("click", () => {
+                sendMessage(btn.getAttribute("data-q"));
+            });
+        });
+
+        clearBtn.addEventListener("click", () => {
+            chatEl.innerHTML = "";
+            history = [];
+            addMessage("assistant", "Chat cleared. Ask me anything.");
+        });
+
+        // ---------- Voice input ----------
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (SpeechRecognition) {
+            const recognition = new SpeechRecognition();
+            recognition.continuous = false;
+            recognition.interimResults = false;
+            recognition.lang = "en-US";
+
+            let listening = false;
+
+            micBtn.addEventListener("click", () => {
+                if (listening) recognition.stop();
+                else recognition.start();
+            });
+
+            recognition.onstart = () => {
+                listening = true;
+                micBtn.classList.add("listening");
+                statusEl.textContent = "Listening...";
+                setOrbState("listening");
+            };
+
+            recognition.onend = () => {
+                listening = false;
+                micBtn.classList.remove("listening");
+                if (!orb.classList.contains("thinking") && !orb.classList.contains("speaking")) {
+                    statusEl.textContent = "Tap the mic to speak";
+                }
+            };
+
+            recognition.onresult = (event) => {
+                const transcript = event.results[0][0].transcript;
+                sendMessage(transcript);
+            };
+
+            recognition.onerror = (event) => {
+                statusEl.textContent = "Mic error: " + event.error;
+                listening = false;
+                micBtn.classList.remove("listening");
+                setOrbState(null);
+            };
+        } else {
+            micBtn.addEventListener("click", () => {
+                statusEl.textContent = "Voice input not supported in this browser";
+            });
+            micBtn.style.opacity = "0.4";
+        }
+
+        // ---------- Voice output ----------
+        function speak(text) {
+            if (!("speechSynthesis" in window)) return;
+            window.speechSynthesis.cancel();
+            const utter = new SpeechSynthesisUtterance(text);
+            utter.rate = 1.0;
+            utter.pitch = 1.0;
+            utter.lang = "en-US";
+
+            utter.onstart = () => setOrbState("speaking");
+            utter.onend = () => {
+                setOrbState(null);
+                statusEl.textContent = "Tap the mic to speak";
+            };
+
+            window.speechSynthesis.speak(utter);
+        }
+    </script>
+</body>
+</html>
